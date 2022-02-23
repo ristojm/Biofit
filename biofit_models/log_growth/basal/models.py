@@ -16,7 +16,7 @@ def Aiba(S,mu_max,Ks,Ki,a):
     return a+((mu_max*S/(Ks+S))*np.exp(-S/Ki))
 
 def Moser(S,mu_max,Ks,n,a):
-    return a+((mu_max*(S**n))/(Ks+(S**n)))
+    return a+(mu_max/(1+((Ks*S)**-n)))
 
 def Edward(S,mu_max,Ks,Ki,a):
     return a+(mu_max*S*(np.exp(-S/Ki)-np.exp(-S/Ks)))

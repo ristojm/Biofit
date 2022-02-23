@@ -69,45 +69,51 @@ def avg_set(xdata_sets,ydata_sets,x0_replace):
     return (compiled_xdata,yaverage_set)
 
 #Define function to fit curves to data
-def fitting(basal,function,xdata,ydata,error,sigma,bounds,abounds):
-    #make temp holder of bounds so that can be used in each fitting
-    tbounds = copy.deepcopy(bounds)
-    #Need to add in any additional bounds on top of those for menten
-    for i,a in enumerate(abounds):
-        tbounds[i].extend(a)
-    #Convert each list of bounds to tuples
-    print(tbounds)
-    #Having defined bounds check which functions to fit and then fit
-    if basal == 'Yes':
-        #If have basal produciton and using bounds also need to add a term to bounds used
-        amax = max(ydata)
-        amin = -np.inf
-        a_terms = ([amin],[amax])
-        for i,a in enumerate(a_terms):
-            tbounds[i].extend(a_terms[i])
-        if error == 'Yes':
-            pop, pcov = curve_fit(function, xdata, ydata, sigma,maxfev=1000000,bounds=tbounds)
-        else:
-            pop, pcov = curve_fit(function, xdata, ydata,maxfev=1000000,bounds=tbounds)
+def fitting(basal,function,model,xdata,ydata,error,sigma,bounds,abounds):
+    if model == 'Inverse_Monod':
+        pop, pcov = curve_fit(f=function, xdata=xdata, ydata=ydata, sigma=sigma)
     else:
-        if error == 'Yes':
-            pop, pcov = curve_fit(function, xdata, ydata,sigma,maxfev=1000000,bounds=tbounds)
+        #make temp holder of bounds so that can be used in each fitting
+        tbounds = copy.deepcopy(bounds)
+        #Need to add in any additional bounds on top of those for menten
+        for i,a in enumerate(abounds):
+            tbounds[i].extend(a)
+        #Having defined bounds check which functions to fit and then fit
+        if basal == 'Yes':
+            #If have basal produciton and using bounds also need to add a term to bounds used
+            amax = max(ydata)
+            amin = -np.inf
+            a_terms = ([amin],[amax])
+            for i,a in enumerate(a_terms):
+                tbounds[i].extend(a_terms[i])
+            #print(tbounds)
+            if error == 'Yes':
+                pop, pcov = curve_fit(f=function, xdata=xdata, ydata=ydata, sigma=sigma,maxfev=1000000,bounds=tbounds)
+            else:
+                pop, pcov = curve_fit(f=function, xdata=xdata, ydata=ydata,maxfev=1000000,bounds=tbounds)
         else:
-            pop, pcov = curve_fit(function, xdata, ydata,maxfev=1000000,bounds=tbounds)
+            if error == 'Yes':
+                pop, pcov = curve_fit(f=function, xdata=xdata, ydata=ydata, sigma=sigma, maxfev=1000000,bounds=tbounds)
+            else:
+                pop, pcov = curve_fit(f=function, xdata=xdata, ydata=ydata,maxfev=1000000,bounds=tbounds)
     return (pop, pcov)
 
 #Define function to save values of associated fitted values to specified dataframe
-def fit_figures(basal,xdata,ydata,var_list,pop,model_name,model,df):
+def fit_figures(basal,xdata,ydata,xdata_plot,var_list,pop,model_name,model,df):
     #Having fit function make dictionary of tuples which can then be used to input data into dataframe of all variables
     var_pairs = {var_list[i]:pop[i] for i,j in enumerate(var_list)}
     #Calculate R^2 value for function
     r_squared = Rsqrd(xdata,ydata,model,pop)
+    #Calculate the maximum y-axis value calculated by fitted function
+    max_function_y = max(model(np.asarray(xdata_plot), *pop))
     #add dictionary entry of the calculated R^2 value
     var_pairs.setdefault('R Squared',r_squared)
     #add dictionary entry to specify the model used
     var_pairs.setdefault('model',model_name)
+    #add dictionary entry to detail the maximum y-axis value calcualted from function
+    var_pairs.setdefault('max_function_y',max_function_y)
     #Convert dictionary into dataframe and return
-    return (df.append(pd.DataFrame(var_pairs,columns=list(var_pairs.keys()),index=[1])),r_squared)
+    return (df.append(pd.DataFrame(var_pairs,columns=list(var_pairs.keys()),index=[1])),r_squared,max_function_y)
 
 
 #Function to scale multiple data sets to be within the same range as the dataset with the greatest v_max to enable evaluation of multiple data sets together while
@@ -198,7 +204,7 @@ def comb_set(no_datasets,scale,xdata_sets,ydata_sets,yerr_sets,x0_replace,error)
     if no_datasets != 1:
         if scale == 'Yes':
             #Scaling data to account for variation in y axis due to intercell variablilty in maximum production or growth rates
-            sxdata,sydata,syerr = data_scalar(xdata_sets,ydata_sets,yerr_sets,x0_replace)
+            sxdata,sydata,syerr = data_scalar(xdata_sets,ydata_sets,yerr_sets)
             #Combine and average scaled data sets
             xdata,ydata = avg_set(sxdata,sydata,x0_replace)
             if error == 'Yes':
@@ -229,7 +235,7 @@ def comb_set(no_datasets,scale,xdata_sets,ydata_sets,yerr_sets,x0_replace,error)
 
 #Function to determine number of steps between x points to plot, want to find average difference between x axis points
 #and then take number of steps equal to x_plotno between each x-axis point
-def xsteps(xdata,x_plotno,xmin_plot):
+def xsteps(xdata,x_plotno,xmin_plot,max_check,max_x):
     #Make list of xaxis differences
     xdif_lst = []
     for i in range(len(xdata)):
@@ -246,7 +252,11 @@ def xsteps(xdata,x_plotno,xmin_plot):
         xdif_avg = xdata[1]
     else:
         pass
-    xdata_plot =  pd.Series(np.arange(xmin_plot,max(xdata),xdif_avg))
+    #check if want to plot to maximum x_axis value or higher
+    if max_check == 'Yes':
+        xdata_plot =  pd.Series(np.arange(xmin_plot,max(xdata),xdif_avg))
+    else:
+        xdata_plot =  pd.Series(np.arange(xmin_plot,max_x,xdif_avg))
 
     return xdata_plot
 
@@ -274,8 +284,23 @@ def esti_var(Estimated_var,ydata,xdata):
                 break
         if Ks_min == 0:
             Ks_min = 1e-15
-        bounds = ([mu_min,Ks_min],[mu_max,Ks_max])
-    else:
-        bounds = ([1e-18,1e-18],[np.inf,np.inf])
+        bounds = {'Menten':([mu_min,Ks_min],[mu_max,Ks_max]),'Inverse_Monod':([mu_min,Ks_min],[mu_max,Ks_max]),'exp_growth':([mu_min],[mu_max]),
+        'Han':([mu_min,Ks_min],[mu_max,Ks_max]),'Luong':([mu_min,Ks_min],[mu_max,Ks_max]),'Andrews':([mu_min,Ks_min],[mu_max,Ks_max]),'Aiba':([mu_min,Ks_min],[mu_max,Ks_max]),
+        'Moser':([mu_min,Ks_min],[mu_max,Ks_max]),'Edward':([mu_min,Ks_min],[mu_max,Ks_max]),'Webb':([mu_min,Ks_min],[mu_max,Ks_max]),'Yano':([mu_min,Ks_min],[mu_max,Ks_max]),
+        'Haldane':([mu_min,Ks_min],[mu_max,Ks_max])}
 
-    return (Smin,bounds)
+        #bounds = ([mu_min,Ks_min],[mu_max,Ks_max])
+    else:
+        bounds = {'Menten':([1e-18,1e-18],[np.inf,np.inf]),'Inverse_Monod':([1e-18,1e-18],[np.inf,np.inf]),'exp_growth':([1e-18],[np.inf]),
+        'Han':([1e-18,1e-18],[np.inf,np.inf]),'Luong':([1e-18,1e-18],[np.inf,np.inf]),'Andrews':([1e-18,1e-18],[np.inf,np.inf]),'Aiba':([1e-18,1e-18],[np.inf,np.inf]),
+        'Moser':([1e-18,1e-18],[np.inf,np.inf]),'Edward':([1e-18,1e-18],[np.inf,np.inf]),'Webb':([1e-18,1e-18],[np.inf,np.inf]),'Yano':([1e-18,1e-18],[np.inf,np.inf]),
+        'Haldane':([1e-18,1e-18],[np.inf,np.inf])}
+        #bounds = ([1e-18,1e-18],[np.inf,np.inf])
+
+    #Create dictionary of additional bounds to be applied to each model, these are inserted into curve fit to set limits to which parameters may fall, with and without
+    #estimiated parameters as these additional parameters may not be estimated from menten kenetics theory
+    ad_bounds = {'Menten':([],[]),'Inverse_Monod':([],[]),'exp_growth':([],[]),'Han':([Smin,-np.inf,-np.inf],[np.inf,np.inf,np.inf]),'Luong':([Smin,-np.inf],[np.inf,np.inf])
+    ,'Andrews':([1e-13],[np.inf]),'Aiba':([0],[np.inf]),'Moser':([0],[np.inf]),'Edward':([1e-13],[np.inf]),'Webb':([1e-13,-np.inf],[np.inf,np.inf]),
+    'Yano':([1e-13,-np.inf],[np.inf,np.inf]),'Haldane':([1e-13,Smin],[np.inf,np.inf])}
+
+    return (Smin,bounds,ad_bounds)
